@@ -16,27 +16,70 @@ class UserView(viewsets.ModelViewSet):
     serializer_class = UserSerializer
 
     def parse_search_phrase(self,allowed_fields, phrase):
-        allowed_data=[(k,v) for k,v in allowed_fields.items()]
-
-        if len(allowed_data) == 1:
-            return Q(allowed_data[0])
-
-        elif len(allowed_data)==2:
-            if 'AND' in phrase:
-                return Q(allowed_data[0]) & Q(allowed_data[1])
+        allowed_data=[]
+        for key, value in allowed_fields.items():
+            # import pdb;pdb.set_trace()
+            if isinstance(allowed_fields[key],dict):
+                key_data=[(k,v) for k, v in allowed_fields[key].items() ]
+                allowed_data.append((key_data))
             else:
-                return Q(allowed_data[0]) | Q(allowed_data[1])
+                allowed_data.append((key,value))
 
-        elif len(allowed_data) ==3:
-            if phrase[0]=='AND' and phrase[1]=='OR':
-                return Q(allowed_data[0]) & Q(allowed_data[1]) | Q(allowed_data[2])
+        counter=0
+        count = 0
+        all_q_exp_list=[]
+        for data in allowed_data:
+            if isinstance(data,list):
+                q_exp_list=[]
+                count=0
+                for single_data in data:
+
+                    value=Q(single_data)
+                    if count ==0:
+                        q_exp_list.append(value)
+                    else:
+                        if phrase[count-1]=='AND':
+                            processed_value=q_exp_list[0] & value
+                            q_exp_list.pop(0)
+                            q_exp_list.append(processed_value)
+                        else:
+                            processed_value = q_exp_list[0] | value
+                            q_exp_list.pop(0)
+                            q_exp_list.append(processed_value)
+
+                    count = count + 1
+
+                if counter==0:
+                    all_q_exp_list.append(q_exp_list[0])
+
+                else:
+                    if phrase[count - 1] == 'AND':
+                        all_processed_value = all_q_exp_list[0] & q_exp_list[0]
+                        all_q_exp_list.pop(0)
+                        all_q_exp_list.append(all_processed_value)
+                    else:
+                        all_processed_value = all_q_exp_list[0] | q_exp_list[0]
+                        all_q_exp_list.pop(0)
+                        all_q_exp_list.append(all_processed_value)
             else:
-                return Q(allowed_data[0]) | Q(allowed_data[1]) & Q(allowed_data[2])
 
-        else:
-            raise ValidationError({'detail':'Only three condition can be applied'})
+                value=Q(data)
+                if counter==0:
+                    all_q_exp_list.append(value)
 
+                else:
+                    if phrase[count - 1] == 'AND':
+                        all_processed_value = all_q_exp_list[0] & value
+                        all_q_exp_list.pop(0)
+                        all_q_exp_list.append(all_processed_value)
+                    else:
+                        all_processed_value = all_q_exp_list[0] | value
+                        all_q_exp_list.pop(0)
+                        all_q_exp_list.append(all_processed_value)
 
+            counter=counter+1
+
+        return all_q_exp_list[0]
 
 
     def perform_create(self, serializer):
@@ -46,7 +89,6 @@ class UserView(viewsets.ModelViewSet):
 
     @action(methods=['post'], detail=False)
     def filter(self, request, *args, **kwargs):
-
         data_keys=request.data.keys()
 
         if 'allowed_fields' not in data_keys:
@@ -61,22 +103,30 @@ class UserView(viewsets.ModelViewSet):
         if not isinstance(allowed_fields,dict):
             raise ValidationError({"detail":"allowed_fields field should be dictionary type"})
 
-        elif not isinstance(search_phrase,list):
+        if not isinstance(search_phrase,list):
             raise ValidationError({"detail":"search_phrase field should be list type"})
 
-        elif len(search_phrase) >0:
+        if len(search_phrase) >0:
             for operator in search_phrase:
                 if operator not in ['AND','OR']:
                     raise ValidationError({'detail':f'{operator} is not a valid operator'})
 
-        elif len(allowed_fields) == 1 and len(search_phrase)>0:
-            raise ValidationError({'detail':'search_phrase field has unwanted operators'})
+        if len(allowed_fields) >= 1:
+            count=0
+            for key,value in allowed_fields.items():
+                    # raise ValidationError({'detail':'search_phrase field has unwanted operators'})
+                if isinstance(allowed_fields[key],dict):
+                    count_element=len(allowed_fields[key])
+                    count=count+count_element
+                else:
+                    count = count + 1
 
-        elif len(allowed_fields)-1 != len(search_phrase):
-            raise ValidationError({'detail':'Data and operator are not applicable with each other'})
+            if count-1 !=len(search_phrase):
+                raise ValidationError({'detail': 'Data and operator are not applicable with each other'})
 
-        else:
-            search_filter=self.parse_search_phrase(allowed_fields,search_phrase)
+
+
+        search_filter=self.parse_search_phrase(allowed_fields,search_phrase)
 
         try:
             queryset=User.objects.filter(search_filter)
@@ -88,10 +138,5 @@ class UserView(viewsets.ModelViewSet):
         serializers=UserSerializer(queryset,many=True)
 
         return Response(serializers.data)
-
-
-
-
-
 
 
