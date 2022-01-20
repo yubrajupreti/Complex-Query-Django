@@ -7,24 +7,87 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
-
+import re
 from user.serializers import UserSerializer
 
+import re
 
 class UserView(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
 
-    def parse_search_phrase(self,allowed_fields, phrase):
-        allowed_data=[]
-        for key, value in allowed_fields.items():
-            # import pdb;pdb.set_trace()
-            if isinstance(allowed_fields[key],dict):
-                key_data=[(k,v) for k, v in allowed_fields[key].items() ]
-                allowed_data.append((key_data))
-            else:
-                allowed_data.append((key,value))
 
+    def conversion(self,value):
+        data_list=[]
+        count_item=0
+        for data in value:
+            value1 = re.sub("[()]", "", data)
+            if 'eq' in value1:
+                split = value1.split('eq')
+                data1 = split[0].replace(" ", "")
+                # data2= split[1]).replace(" ","")
+                data_list.append((split[0].replace(" ", ""), split[1].replace(" ", "")))
+            if 'lt' in value1:
+                split = value1.split('lt')
+                join_value = split[0] + '__lte'
+                data_list.append((join_value.replace(" ", ""), split[1].replace(" ", "")))
+
+            if 'gt' in value1:
+                split = value1.split('gt')
+                join_value = split[0] + '__gte'
+                data_list.append((join_value.replace(" ", ""), split[1]).replace(" ", ""))
+
+            count_item += 1
+
+        return data_list,count_item
+
+    def identifier(self,data_set):
+        allowed_data=[]
+        count_item=0
+        for string in data_set:
+            count=0
+            for s in string:
+                if s == '(':
+                    count=count+1
+                    if count==2:
+                        own_fields=[]
+                        value1=re.sub("[()]","",string)
+                        value2=value1.split(",")
+                        data_set,count=self.conversion(value2)
+                        allowed_data.append(data_set)
+
+                        count_item=count_item+count
+                        print(value1)
+                        break
+
+                else:
+                    value1=[re.sub("[()]","",string)]
+                    data_set,count = self.conversion(value1)
+                    allowed_data.append(data_set[0])
+                    count_item = count_item + count
+
+                    break
+
+        return allowed_data,count_item
+
+    def parse_search_phrase(self,allowed_fields,phrase):
+        bracket = 0
+
+        for single in allowed_fields:
+            for i in single:
+                if i == '(':
+                    bracket += 1
+                if i == ')':
+                    if bracket == 0:
+                        raise ValidationError({"detail":"Please check your opening and closing brackets"})
+                    bracket -= 1
+        if bracket !=0:
+            raise ValidationError({"detail": "Please check your opening and closing brackets"})
+
+        allowed_data,all_count=self.identifier(allowed_fields)
+
+        if all_count - 1 != len(phrase):
+            raise ValidationError({'detail': 'Data and operator are not applicable with each other'})
         counter=0
         count = 0
         all_q_exp_list=[]
@@ -78,7 +141,6 @@ class UserView(viewsets.ModelViewSet):
                         all_q_exp_list.append(all_processed_value)
 
             counter=counter+1
-
         return all_q_exp_list[0]
 
 
@@ -93,15 +155,15 @@ class UserView(viewsets.ModelViewSet):
 
         if 'allowed_fields' not in data_keys:
             raise ValidationError({"detail":"allowed_fields field cannot be null"})
-
+        #
         if 'search_phrase' not in data_keys:
             raise ValidationError({"detail":"search_phrase field cannot be null"})
 
         allowed_fields = request.data['allowed_fields']
         search_phrase = request.data['search_phrase']
 
-        if not isinstance(allowed_fields,dict):
-            raise ValidationError({"detail":"allowed_fields field should be dictionary type"})
+        if not isinstance(allowed_fields,list):
+            raise ValidationError({"detail":"allowed_fields field should be list type"})
 
         if not isinstance(search_phrase,list):
             raise ValidationError({"detail":"search_phrase field should be list type"})
@@ -111,21 +173,21 @@ class UserView(viewsets.ModelViewSet):
                 if operator not in ['AND','OR']:
                     raise ValidationError({'detail':f'{operator} is not a valid operator'})
 
-        if len(allowed_fields) >= 1:
-            count=0
-            for key,value in allowed_fields.items():
-                    # raise ValidationError({'detail':'search_phrase field has unwanted operators'})
-                if isinstance(allowed_fields[key],dict):
-                    count_element=len(allowed_fields[key])
-                    count=count+count_element
-                else:
-                    count = count + 1
+        # if len(allowed_fields) >= 1:
+        #     count=0
+        #     for key,value in allowed_fields.items():
+        #             # raise ValidationError({'detail':'search_phrase field has unwanted operators'})
+        #         if isinstance(allowed_fields[key],dict):
+        #             count_element=len(allowed_fields[key])
+        #             count=count+count_element
+        #         else:
+        #             count = count + 1
+        #
+        #     if count-1 !=len(search_phrase):
+        #         raise ValidationError({'detail': 'Data and operator are not applicable with each other'})
 
-            if count-1 !=len(search_phrase):
-                raise ValidationError({'detail': 'Data and operator are not applicable with each other'})
-
-
-
+        #
+        #
         search_filter=self.parse_search_phrase(allowed_fields,search_phrase)
 
         try:
@@ -138,5 +200,7 @@ class UserView(viewsets.ModelViewSet):
         serializers=UserSerializer(queryset,many=True)
 
         return Response(serializers.data)
+
+
 
 
