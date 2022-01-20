@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
 from django.core.exceptions import FieldError
@@ -7,10 +9,10 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
-import re
+
 from user.serializers import UserSerializer
 
-import re
+
 
 class UserView(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -18,6 +20,12 @@ class UserView(viewsets.ModelViewSet):
 
 
     def conversion(self,value):
+        """
+        This method works on converting the operator into python understandable format.
+
+        :param value: accept list data type
+        :return: list of data and integer
+        """
         data_list=[]
         count_item=0
         for data in value:
@@ -41,7 +49,14 @@ class UserView(viewsets.ModelViewSet):
 
         return data_list,count_item
 
+
     def identifier(self,data_set):
+        """
+        This method identity where the operation is nested or not and act accordingly.
+
+        :param data_set: accept list data type
+        :return: list of data and integer
+        """
         allowed_data=[]
         count_item=0
         for string in data_set:
@@ -70,8 +85,34 @@ class UserView(viewsets.ModelViewSet):
 
         return allowed_data,count_item
 
+
+    def expression(self,data1,data2,phrase,count):
+        """
+        This method operation on the basis of operands and return the final output
+        """
+        if phrase[count - 1] == 'AND':
+            processed_value = data1[0] & data2
+            data1.pop(0)
+            data1.append(processed_value)
+        else:
+            processed_value = data1[0] | data2
+            data1.pop(0)
+            data1.append(processed_value)
+
+        return data1
+
     def parse_search_phrase(self,allowed_fields,phrase):
+        """
+        This method converts the normal expression into Q expression.
+
+        :param allowed_fields: list data type
+        :param phrase: list data type
+        :return: Q object
+        """
         bracket = 0
+        counter = 0
+        count = 0
+        all_q_exp_list = []
 
         for single in allowed_fields:
             for i in single:
@@ -88,57 +129,39 @@ class UserView(viewsets.ModelViewSet):
 
         if all_count - 1 != len(phrase):
             raise ValidationError({'detail': 'Data and operator are not applicable with each other'})
-        counter=0
-        count = 0
-        all_q_exp_list=[]
+
         for data in allowed_data:
+
             if isinstance(data,list):
                 q_exp_list=[]
                 count=0
-                for single_data in data:
 
+                for single_data in data:
                     value=Q(single_data)
+
                     if count ==0:
                         q_exp_list.append(value)
+
                     else:
-                        if phrase[count-1]=='AND':
-                            processed_value=q_exp_list[0] & value
-                            q_exp_list.pop(0)
-                            q_exp_list.append(processed_value)
-                        else:
-                            processed_value = q_exp_list[0] | value
-                            q_exp_list.pop(0)
-                            q_exp_list.append(processed_value)
+                        list_expression=self.expression(q_exp_list,value,phrase,count)
 
                     count = count + 1
 
                 if counter==0:
-                    all_q_exp_list.append(q_exp_list[0])
+                    all_q_exp_list.append(list_expression[0])
 
                 else:
-                    if phrase[count - 1] == 'AND':
-                        all_processed_value = all_q_exp_list[0] & q_exp_list[0]
-                        all_q_exp_list.pop(0)
-                        all_q_exp_list.append(all_processed_value)
-                    else:
-                        all_processed_value = all_q_exp_list[0] | q_exp_list[0]
-                        all_q_exp_list.pop(0)
-                        all_q_exp_list.append(all_processed_value)
+                    list_expression = self.expression(all_q_exp_list, q_exp_list[0], phrase, count)
+                    all_q_exp_list.append(list_expression[0])
             else:
-
                 value=Q(data)
+
                 if counter==0:
                     all_q_exp_list.append(value)
 
                 else:
-                    if phrase[count - 1] == 'AND':
-                        all_processed_value = all_q_exp_list[0] & value
-                        all_q_exp_list.pop(0)
-                        all_q_exp_list.append(all_processed_value)
-                    else:
-                        all_processed_value = all_q_exp_list[0] | value
-                        all_q_exp_list.pop(0)
-                        all_q_exp_list.append(all_processed_value)
+                    list_expression = self.expression(all_q_exp_list, value, phrase, count)
+                    all_q_exp_list.append(list_expression[0])
 
             counter=counter+1
         return all_q_exp_list[0]
@@ -173,21 +196,7 @@ class UserView(viewsets.ModelViewSet):
                 if operator not in ['AND','OR']:
                     raise ValidationError({'detail':f'{operator} is not a valid operator'})
 
-        # if len(allowed_fields) >= 1:
-        #     count=0
-        #     for key,value in allowed_fields.items():
-        #             # raise ValidationError({'detail':'search_phrase field has unwanted operators'})
-        #         if isinstance(allowed_fields[key],dict):
-        #             count_element=len(allowed_fields[key])
-        #             count=count+count_element
-        #         else:
-        #             count = count + 1
-        #
-        #     if count-1 !=len(search_phrase):
-        #         raise ValidationError({'detail': 'Data and operator are not applicable with each other'})
 
-        #
-        #
         search_filter=self.parse_search_phrase(allowed_fields,search_phrase)
 
         try:
